@@ -1,5 +1,6 @@
 """State management for tokens and device cache."""
 import logging
+import os
 import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
@@ -12,7 +13,13 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 # File path for persisting sessions
-SESSIONS_FILE = Path(__file__).parent.parent.parent / "data" / "sessions.json"
+# Persist under DATA_PATH (the add-on's /data volume, set by run.sh / the
+# Dockerfile) so sessions and device passwords survive add-on updates and
+# rebuilds. The old location inside the image (/app/data) is wiped whenever
+# the container is recreated.
+_LEGACY_SESSIONS_FILE = Path(__file__).parent.parent.parent / "data" / "sessions.json"
+_DATA_PATH = os.environ.get("DATA_PATH")
+SESSIONS_FILE = Path(_DATA_PATH) / "sessions.json" if _DATA_PATH else _LEGACY_SESSIONS_FILE
 
 
 class InMemoryStateManager:
@@ -61,8 +68,11 @@ class InMemoryStateManager:
     def _load_sessions(self) -> None:
         """Load sessions from file on startup."""
         try:
-            if SESSIONS_FILE.exists():
-                with open(SESSIONS_FILE, "r") as f:
+            source = SESSIONS_FILE
+            if not source.exists() and _LEGACY_SESSIONS_FILE.exists():
+                source = _LEGACY_SESSIONS_FILE  # one-time migration from /app/data
+            if source.exists():
+                with open(source, "r") as f:
                     data = json.load(f)
                     self._tokens = data.get("tokens", {})
                     self._device_passwords = self._migrate_device_passwords(
