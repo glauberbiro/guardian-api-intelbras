@@ -70,6 +70,21 @@ async def async_setup_entry(
                     )
                 )
 
+        # PGM output switches for alarm centrals (PGM1/PGM2 are reported in
+        # the status frame of the 2018 family / ANM 24 NET).
+        for device_id, device in coordinator.data.get("devices", {}).items():
+            if is_eletrificador(device):
+                continue
+            for pgm_number in PGM_NUMBERS:
+                entities.append(
+                    GuardianPgmSwitch(
+                        coordinator,
+                        device_id,
+                        device.get("mac", ""),
+                        pgm_number,
+                    )
+                )
+
         # One "Anular" (bypass) switch per zone, so a zone can be bypassed
         # from a script/dashboard even while it is CLOSED (pre-bypass, so it
         # will not trip if it opens after arming). The panel does not report
@@ -114,6 +129,95 @@ async def async_setup_entry(
             async_add_entities(new_entities)
 
     entry.async_on_unload(coordinator.async_add_listener(_check_new_zones))
+
+
+PGM_NUMBERS = (1, 2)
+
+
+class GuardianPgmSwitch(CoordinatorEntity, SwitchEntity):
+    """PGM (programmable output) of an alarm central.
+
+    State comes from the panel's status frame (pgm_states). Until the first
+    status with PGM data arrives, the last commanded state is shown.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = SwitchDeviceClass.SWITCH
+
+    def __init__(
+        self,
+        coordinator: GuardianCoordinator,
+        device_id: int,
+        device_mac: str,
+        pgm_number: int,
+    ):
+        super().__init__(coordinator)
+        self._device_id = device_id
+        self._device_mac = device_mac
+        self._pgm_number = pgm_number
+        self._commanded: bool | None = None
+        self._attr_unique_id = f"{device_mac}_pgm_{pgm_number}"
+        self._attr_name = f"PGM {pgm_number}"
+        self._attr_icon = "mdi:electric-switch"
+
+    @property
+    def available(self) -> bool:
+        if not self.coordinator.last_update_success:
+            return False
+        device = self.coordinator.get_device(self._device_id)
+        if device and device.get("connection_unavailable", False):
+            return False
+        return True
+
+    @property
+    def device_info(self):
+        device = self.coordinator.get_device(self._device_id)
+        if device:
+            return {
+                "identifiers": {(DOMAIN, self._device_mac)},
+                "name": device.get("description", f"Intelbras Alarm {self._device_id}"),
+                "manufacturer": "Intelbras",
+                "model": device.get("model", "Guardian Alarm"),
+            }
+        return None
+
+    def _reported_state(self) -> bool | None:
+        device = self.coordinator.get_device(self._device_id) or {}
+        states = device.get("pgm_states") or {}
+        value = states.get(str(self._pgm_number), states.get(self._pgm_number))
+        return None if value is None else bool(value)
+
+    @property
+    def assumed_state(self) -> bool:
+        return self._reported_state() is None
+
+    @property
+    def is_on(self) -> bool | None:
+        reported = self._reported_state()
+        if reported is not None:
+            return reported
+        return self._commanded
+
+    @property
+    def extra_state_attributes(self):
+        return {"device_id": self._device_id, "pgm_number": self._pgm_number}
+
+    async def _async_set(self, state: bool) -> None:
+        action = "on" if state else "off"
+        _LOGGER.info("Turning PGM%d %s for device %d", self._pgm_number, action, self._device_id)
+        result = await self.coordinator.client.set_pgm(self._device_id, self._pgm_number, state)
+        if not result or not result.get("success"):
+            error = (result or {}).get("error", "erro desconhecido")
+            raise HomeAssistantError(f"Falha ao {'ligar' if state else 'desligar'} PGM{self._pgm_number}: {error}")
+        self._commanded = state
+        self.async_write_ha_state()
+        await self.coordinator.async_refresh_device(self._device_id)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._async_set(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._async_set(False)
 
 
 class GuardianZoneBypassSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
