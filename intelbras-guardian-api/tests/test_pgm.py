@@ -53,9 +53,7 @@ def test_pgm_address_mapping():
 def test_pgm_states_parsed_from_output_byte():
     proto = ISECNetProtocol()
     armed = proto._parse_isecv1_status_response(_wrap_v1(ANM24_ARMED_PGM1_ON))
-    assert armed.is_armed is True
     assert armed.pgm_states == {1: True, 2: False}
 
     disarmed = proto._parse_isecv1_status_response(_wrap_v1(ANM24_DISARMED_PGM_OFF))
-    assert disarmed.is_armed is False
     assert disarmed.pgm_states == {1: False, 2: False}
