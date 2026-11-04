@@ -446,6 +446,12 @@ class GuardianApiClient:
             "POST", f"/api/v1/alarm/{device_id}/siren/off", {}
         )
 
+    async def set_pgm(self, device_id: int, pgm_number: int, state: bool) -> Dict[str, Any]:
+        """Turn a PGM output on or off."""
+        return await self._request_with_error(
+            "POST", f"/api/v1/alarm/{device_id}/pgm/{pgm_number}", {"state": state}
+        )
+
     async def trigger_panic(self, device_id: int, panic_type: int = 1) -> Dict[str, Any]:
         """Trigger panic alarm on a device."""
         return await self._request_with_error(

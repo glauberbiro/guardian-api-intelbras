@@ -494,6 +494,10 @@ class GuardianCoordinator(DataUpdateCoordinator):
                                     f"Message: {status.get('message')}"
                                 )
 
+                            # PGM output states (alarm centrals that report them)
+                            if status.get("pgm_states"):
+                                processed_devices[device_id]["pgm_states"] = status.get("pgm_states")
+
                             # Eletrificador-specific fields
                             if is_eletrificador:
                                 processed_devices[device_id]["shock_enabled"] = status.get("shock_enabled")
@@ -883,6 +887,10 @@ class GuardianCoordinator(DataUpdateCoordinator):
             device["connection_unavailable_raw"] = connection_unavailable_raw
             device["connection_unavailable"] = debounced_unavailable
             device["last_updated"] = status.get("last_updated")
+
+            # PGM output states (alarm centrals that report them)
+            if status.get("pgm_states"):
+                device["pgm_states"] = status.get("pgm_states")
 
             # Eletrificador-specific fields
             model = device.get("model", "").upper()

@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Dict, Optional, List
 from enum import Enum
 
 from app.services.auth_service import auth_service
@@ -149,6 +149,7 @@ class AlarmStatusResponse(BaseModel):
     shock_triggered: bool = Field(default=False, description="Whether shock/fence is triggered (eletrificador only)")
     alarm_enabled: bool = Field(default=False, description="Whether alarm is enabled (eletrificador only)")
     alarm_triggered: bool = Field(default=False, description="Whether alarm is triggered (eletrificador only)")
+    pgm_states: Dict[str, bool] = Field(default_factory=dict, description="PGM output states keyed by PGM number (e.g. {'1': true})")
     # Connection status fields (for handling connection failures)
     connection_unavailable: bool = Field(default=False, description="True if using cached data due to connection failure")
     last_updated: Optional[str] = Field(None, description="ISO timestamp of when status was last successfully fetched")
@@ -1120,7 +1121,8 @@ async def get_alarm_status(
             shock_enabled=status.shock_enabled,
             shock_triggered=status.shock_triggered,
             alarm_enabled=status.alarm_enabled,
-            alarm_triggered=status.alarm_triggered
+            alarm_triggered=status.alarm_triggered,
+            pgm_states={str(k): v for k, v in (status.pgm_states or {}).items()}
         )
 
     except InvalidSessionError as e:
@@ -1237,6 +1239,7 @@ async def get_alarm_status_auto(
                     shock_triggered=last_known.get("shock_triggered", False),
                     alarm_enabled=last_known.get("alarm_enabled", False),
                     alarm_triggered=last_known.get("alarm_triggered", False),
+                    pgm_states=last_known.get("pgm_states", {}),
                     # Connection status
                     connection_unavailable=True,
                     last_updated=last_known.get("_last_updated")
@@ -1294,6 +1297,7 @@ async def get_alarm_status_auto(
             "shock_triggered": status.shock_triggered,
             "alarm_enabled": status.alarm_enabled,
             "alarm_triggered": status.alarm_triggered,
+            "pgm_states": {str(k): v for k, v in (status.pgm_states or {}).items()},
         }
         await state_manager.set_last_known_status(device_id, last_known_data)
 
@@ -1314,6 +1318,7 @@ async def get_alarm_status_auto(
             shock_triggered=status.shock_triggered,
             alarm_enabled=status.alarm_enabled,
             alarm_triggered=status.alarm_triggered,
+            pgm_states={str(k): v for k, v in (status.pgm_states or {}).items()},
             # Connection status
             connection_unavailable=False,
             last_updated=datetime.utcnow().isoformat()
@@ -1785,6 +1790,94 @@ async def turn_off_siren(
         raise HTTPException(status_code=503, detail=str(e.message))
     except Exception as e:
         logger.error(f"Unexpected error turning off siren: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class PgmRequest(BaseModel):
+    """PGM on/off request model."""
+    state: bool = Field(..., description="True = turn PGM on, False = turn off")
+    password: Optional[str] = Field(None, min_length=4, max_length=6, description="Device password (4-6 digits). If not provided, uses saved password.")
+    save_password: bool = Field(default=False, description="Save password for future use")
+
+
+@router.post("/{device_id}/pgm/{pgm_number}", response_model=EletrificadorOperationResponse)
+async def set_pgm(
+    device_id: int,
+    pgm_number: int,
+    request: PgmRequest,
+    x_session_id: str = Header(..., alias="X-Session-ID")
+):
+    """Turn a PGM (programmable output) on or off. Requires X-Session-ID header."""
+    if not 1 <= pgm_number <= 19:
+        raise HTTPException(status_code=400, detail="pgm_number must be between 1 and 19")
+    action = "on" if request.state else "off"
+    try:
+        access_token = await auth_service.get_valid_token(x_session_id)
+
+        password = await _get_password(x_session_id, device_id, request.password, request.save_password)
+        if not password:
+            raise AlarmOperationError("Password required. Provide password or save one first.")
+
+        conn_info = await _get_device_connection_info(access_token, device_id)
+        if not conn_info:
+            raise DeviceNotFoundError(f"Device {device_id} not found or connection info not available")
+
+        conn_type = "IP Receiver" if conn_info.use_ip_receiver else "Cloud"
+        logger.info(f"Turning PGM{pgm_number} {action} for device {device_id} (MAC: {conn_info.mac}) via {conn_type}")
+
+        success, message = await isecnet_client.set_pgm(
+            device_id=device_id,
+            mac=conn_info.mac,
+            password=password,
+            pgm_number=pgm_number,
+            enable=request.state,
+            use_ip_receiver=conn_info.use_ip_receiver,
+            ip_receiver_addr=conn_info.ip_receiver_addr,
+            ip_receiver_port=conn_info.ip_receiver_port,
+            ip_receiver_account=conn_info.ip_receiver_account
+        )
+
+        if not success:
+            connection_errors = ["busy", "offline", "timeout", "connection", "not connected", "connect"]
+            if any(err in message.lower() for err in connection_errors):
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "error": "ConnectionUnavailable",
+                        "message": f"Conexao com a central indisponivel: {message}",
+                    }
+                )
+            raise AlarmOperationError(f"Failed to turn PGM{pgm_number} {action}: {message}")
+
+        last_known = await state_manager.get_last_known_status(device_id)
+        current_status = last_known.get("arm_mode", "disarmed") if last_known else "disarmed"
+
+        await event_stream.broadcast_event({
+            "event_type": "state_changed",
+            "device_id": device_id,
+            "new_status": current_status,
+            "source": "command",
+        }, event_type="alarm_event")
+
+        return EletrificadorOperationResponse(
+            success=True,
+            device_id=device_id,
+            new_status=current_status,
+            message=f"PGM{pgm_number} {'ligada' if request.state else 'desligada'}"
+        )
+
+    except HTTPException:
+        raise
+    except InvalidSessionError as e:
+        raise HTTPException(status_code=401, detail=str(e.message))
+    except AlarmOperationError as e:
+        raise HTTPException(status_code=400, detail=str(e.message))
+    except DeviceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e.message))
+    except APIConnectionError as e:
+        raise HTTPException(status_code=503, detail=str(e.message))
+    except Exception as e:
+        logger.error(f"Unexpected error setting PGM{pgm_number}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

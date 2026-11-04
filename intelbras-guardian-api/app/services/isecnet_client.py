@@ -771,6 +771,36 @@ class ISECNetClient:
                     await self._disconnect_device(device_id)
                 return False, str(e)
 
+    async def set_pgm(
+        self,
+        device_id: int,
+        mac: str,
+        password: str,
+        pgm_number: int,
+        enable: bool,
+        use_ip_receiver: bool = False,
+        ip_receiver_addr: str = None,
+        ip_receiver_port: int = None,
+        ip_receiver_account: str = None
+    ) -> Tuple[bool, str]:
+        """Turn a PGM output on or off."""
+        device_lock = self._get_device_lock(device_id)
+        async with device_lock:
+            success, conn = await self._ensure_connected(
+                device_id, mac, password,
+                use_ip_receiver, ip_receiver_addr, ip_receiver_port, ip_receiver_account
+            )
+            if not success or not conn:
+                return False, "Not connected"
+
+            try:
+                return await conn.protocol.set_pgm(pgm_number, enable)
+            except Exception as e:
+                logger.error(f"Error setting PGM{pgm_number} for device {device_id}: {e}")
+                async with self._lock:
+                    await self._disconnect_device(device_id)
+                return False, str(e)
+
     async def trigger_panic(
         self,
         device_id: int,

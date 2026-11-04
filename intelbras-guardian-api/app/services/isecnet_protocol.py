@@ -64,7 +64,13 @@ class ISECNetV1Command(IntEnum):
     DEACTIVATE_CENTRAL = 0x44  # 68 = 'D'
     PANIC = 0x45  # 69 - APK: new int[]{69, tipo} for non-Amt8000 panels
     SIREN_OFF = 0x4F  # 79 = 'O'
-    PGM = 0x47  # 71 = 'G'
+    PGM = 0x47  # 71 = 'G' (unused - kept for reference)
+    PGM_CONTROL = 0x50  # 80 = 'P' - ISECMobile PGM on/off: [0x50, 'L'|'D', 0x30+pgm]
+
+
+# ISECMobile PGM sub-commands (doc section 7.3)
+PGM_SUB_ON = 0x4C   # 'L' (liga)
+PGM_SUB_OFF = 0x44  # 'D' (desliga)
 
 
 class ISECNetServerCommand(IntEnum):
@@ -118,6 +124,9 @@ class AlarmStatus:
     zone_battery_low: List[int] = None    # Indices of zones with low battery
     zone_signal: dict = None              # {zone_index: signal_value (0-10)}
     zone_tamper: List[int] = None         # Indices of zones with tamper
+    # PGM output states ({pgm_number: is_on}). 2018 family / ANM 24 NET report
+    # PGM1 and PGM2 in the output byte (data[38] bit 6 / bit 5).
+    pgm_states: dict = None
     # False when the reply could not be parsed (short/invalid frame). An
     # empty AlarmStatus() used to be returned as a *successful* status,
     # which downstream rendered as "every zone closed".
@@ -136,6 +145,8 @@ class AlarmStatus:
             self.zone_signal = {}
         if self.zone_tamper is None:
             self.zone_tamper = []
+        if self.pgm_states is None:
+            self.pgm_states = {}
 
 
 class ConnectionType(IntEnum):
@@ -620,6 +631,21 @@ class ISECNetProtocol:
         command = [ISECNetV1Command.SIREN_OFF]
         return self._build_isecv1_cmd(command, password)
 
+    def _build_isecv1_pgm_cmd(self, password: str, pgm_number: int, enable: bool) -> bytes:
+        """Build ISECNet V1 (ISECMobile) PGM on/off command.
+
+        Content: [0x50, 0x4C ('L' = on) | 0x44 ('D' = off), 0x30 + pgm_number]
+        PGM1 = 0x31 ... PGM19 = 0x43.
+        """
+        if not 1 <= pgm_number <= 19:
+            raise ValueError(f"Invalid PGM number: {pgm_number}")
+        command = [
+            ISECNetV1Command.PGM_CONTROL,
+            PGM_SUB_ON if enable else PGM_SUB_OFF,
+            0x30 + pgm_number,
+        ]
+        return self._build_isecv1_cmd(command, password)
+
     def _build_isecv1_status_cmd(self, password: str) -> bytes:
         """Build ISECNet V1 get partial status command."""
         return self._build_isecv1_cmd([ISECNetV1Command.GET_PARTIAL_STATUS], password)
@@ -982,6 +1008,11 @@ class ISECNetProtocol:
             alarm_bit2 = bool(output_byte & 0x04)  # Bit 2: alarm flag (transient during arm/disarm!)
             siren_bit7 = bool(output_byte & 0x80)  # Bit 7: siren (more reliable)
             # Don't set is_triggered yet - will cross-check with zone alarm data below
+            # PGM outputs (ISECMobile doc 7.5, Status38): bit 6 = PGM1, bit 5 = PGM2
+            status.pgm_states = {
+                1: bool(output_byte & 0x40),
+                2: bool(output_byte & 0x20),
+            }
 
         # Parse zone/sector status
         # Log full hex data for debugging zone byte positions
@@ -2403,6 +2434,42 @@ class ISECNetProtocol:
                 return success or True, message
             except Exception as e:
                 logger.error(f"Error turning off siren: {e}")
+                return False, str(e)
+
+    async def set_pgm(self, pgm_number: int, enable: bool) -> Tuple[bool, str]:
+        """Turn a PGM output on or off.
+
+        V1 (IP Receiver / V1 Cloud): ISECMobile [0x50, 'L'|'D', 0x30+pgm].
+        V2 (Cloud): Command.PGM_ON_OFF (0x45AF) with [pgm_index, state].
+        """
+        async with self._lock:
+            if not self.is_authenticated:
+                return False, "Not authenticated"
+
+            action = "on" if enable else "off"
+            try:
+                if self._is_ip_receiver or self._is_v1:
+                    cmd = self._build_isecv1_pgm_cmd(self._password, pgm_number, enable)
+                    logger.info(f"V1 PGM{pgm_number} {action}: cmd={cmd.hex()}")
+                    response = await self._send_and_receive(cmd, timeout=5.0)
+                    if not response:
+                        return False, "No response"
+                    logger.info(f"V1 PGM{pgm_number} {action} response: {response.hex()}")
+                    success, message = self._parse_isecv1_command_response(response)
+                    if success:
+                        return True, f"PGM{pgm_number} {action}"
+                    return False, f"PGM command failed: {message}"
+                else:
+                    cmd = self._build_pgm_cmd(pgm_number - 1, enable)
+                    response = await self._send_and_receive(cmd)
+                    if not response:
+                        return False, "No response"
+                    success, error_code = self._parse_command_response(response)
+                    if success:
+                        return True, f"PGM{pgm_number} {action}"
+                    return False, f"PGM command failed: error_code={error_code}"
+            except Exception as e:
+                logger.error(f"Error setting PGM{pgm_number} {action}: {e}")
                 return False, str(e)
 
     async def trigger_panic(self, panic_type: int = 1) -> Tuple[bool, str]:
