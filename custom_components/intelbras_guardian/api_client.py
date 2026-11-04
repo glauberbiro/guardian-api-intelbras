@@ -6,6 +6,7 @@ from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, cast
 import aiohttp
 import async_timeout
 
+from .const import PRE_ARM_PGM_DELAY
 from .models import AlarmStatus, ArmResult
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,6 +28,8 @@ class GuardianApiClient:
         self._session = session
         self._timeout = timeout
         self._session_id: Optional[str] = None
+        # {device_id: pgm_number} turned on before every arm (set from entry options)
+        self.pre_arm_pgm: Dict[int, int] = {}
         self._base_url = f"http://{host}:{port}"
 
     @property
@@ -239,6 +242,22 @@ class GuardianApiClient:
             {"password": password}
         )
 
+    async def _pre_arm(self, device_id: int) -> None:
+        """Turn on the device's pre-arm PGM (if configured) and let it settle."""
+        pgm_number = self.pre_arm_pgm.get(device_id)
+        if not pgm_number:
+            return
+        _LOGGER.info("Turning on PGM%d before arming device %d", pgm_number, device_id)
+        result = await self.set_pgm(device_id, pgm_number, True)
+        if not result or not result.get("success"):
+            # Still try to arm: the panel itself reports open zones if needed.
+            _LOGGER.warning(
+                "Pre-arm PGM%d failed for device %d: %s",
+                pgm_number, device_id, (result or {}).get("error"),
+            )
+            return
+        await asyncio.sleep(PRE_ARM_PGM_DELAY)
+
     async def arm_partition(
         self,
         device_id: int,
@@ -250,6 +269,7 @@ class GuardianApiClient:
         Returns:
             ArmResult with 'success' (bool) and optionally 'error' (str) or 'open_zones' (list)
         """
+        await self._pre_arm(device_id)
         result = await self._request_with_error(
             "POST",
             f"/api/v1/alarm/{device_id}/arm",
@@ -282,6 +302,7 @@ class GuardianApiClient:
             Dict with 'success' (bool); on failure 'error' (str) and
             optionally 'open_zones' (list).
         """
+        await self._pre_arm(device_id)
         payload: Dict[str, Any] = {"partitions": partition_indices, "mode": mode}
         if ignore_open_zones:
             payload["ignore_open_zones"] = True

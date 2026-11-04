@@ -45,6 +45,7 @@
         "menu_options": {
           "configure_unified_alarm": "Configure Unified Alarm",
           "configure_device_password": "Configure Device Password",
+          "configure_pre_arm_pgm": "Turn on PGM before arming",
           "manage_zones": "Manage Zone Names",
           "reauth": "Re-authenticate (if session expired)"
         }
@@ -94,6 +95,10 @@
       "manage_zones": {
         "title": "Manage Zone Names",
         "description": "Zone friendly names can be configured via the FastAPI Web UI.\n\nAccess: {webui_url}\n\nLogin with your Intelbras credentials, select the device and click 'Zones' to manage names."
+      },
+      "configure_pre_arm_pgm": {
+        "title": "Turn on PGM before arming",
+        "description": "Pick a PGM to turn on automatically before every arm (e.g. an electric fence on PGM1 that must be on for the panel to accept arming).\n\nFields: {devices}"
       }
     },
     "error": {

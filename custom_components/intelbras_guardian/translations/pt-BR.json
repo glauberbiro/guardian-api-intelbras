@@ -45,6 +45,7 @@
         "menu_options": {
           "configure_unified_alarm": "Configurar Alarme Unificado",
           "configure_device_password": "Configurar Senha do Dispositivo",
+          "configure_pre_arm_pgm": "Ligar PGM antes de armar",
           "manage_zones": "Gerenciar Nomes das Zonas",
           "reauth": "Re-autenticar (se a sessão expirou)"
         }
@@ -94,6 +95,10 @@
       "manage_zones": {
         "title": "Gerenciar Nomes das Zonas",
         "description": "Os nomes amigáveis das zonas podem ser configurados via Web UI do FastAPI.\n\nAcesse: {webui_url}\n\nFaça login com suas credenciais Intelbras, selecione o dispositivo e clique em 'Zonas' para gerenciar os nomes."
+      },
+      "configure_pre_arm_pgm": {
+        "title": "Ligar PGM antes de armar",
+        "description": "Escolha uma PGM para ligar automaticamente antes de cada arme (ex.: cerca elétrica na PGM1 que precisa estar ligada para a central aceitar o arme).\n\nCampos: {devices}"
       }
     },
     "error": {

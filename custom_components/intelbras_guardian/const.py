@@ -76,6 +76,12 @@ PLATFORMS = ["alarm_control_panel", "binary_sensor", "button", "event", "sensor"
 EVENT_ALARM = f"{DOMAIN}_alarm_event"
 
 # Unified alarm configuration
+# PGM to turn on right before arming, per device ({device_id: pgm_number}).
+# Some installs (e.g. an electric fence on PGM1 whose "fence off" contact is a
+# zone) refuse to arm (0xE4 open zones) until that PGM is on.
+CONF_PRE_ARM_PGM = "pre_arm_pgm"
+PRE_ARM_PGM_DELAY = 2.0  # seconds to let the PGM-driven zone settle before arming
+
 CONF_UNIFIED_ALARM = "unified_alarm"  # Enable unified alarm entity
 CONF_HOME_PARTITIONS = "home_partitions"  # Partition indices to arm in "Home" mode
 CONF_AWAY_PARTITIONS = "away_partitions"  # Partition indices to arm in "Away" mode
