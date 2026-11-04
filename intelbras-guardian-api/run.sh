@@ -3,7 +3,8 @@
 # Intelbras Guardian API Add-on
 # ==============================================================================
 
-REPO_URL="https://github.com/bobaoapae/guardian-api-intelbras"
+REPO_URL="https://github.com/glauberbiro/guardian-api-intelbras"
+REPO_BRANCH="feat/anm24-pgm"
 
 # Read configuration from options.json if it exists
 CONFIG_PATH=/data/options.json
@@ -47,7 +48,7 @@ if [ -d "/homeassistant" ]; then
     fi
 
     echo "  Downloading HA integration from GitHub..."
-    if curl -sL "${REPO_URL}/archive/refs/heads/main.tar.gz" -o /tmp/repo.tar.gz; then
+    if curl -sL "${REPO_URL}/archive/refs/heads/${REPO_BRANCH}.tar.gz" -o /tmp/repo.tar.gz; then
         tar xf /tmp/repo.tar.gz -C /tmp/
         EXTRACTED=$(ls -d /tmp/guardian-api-intelbras-* 2>/dev/null | head -1)
         if [ -n "$EXTRACTED" ] && [ -d "$EXTRACTED/custom_components/intelbras_guardian" ]; then
