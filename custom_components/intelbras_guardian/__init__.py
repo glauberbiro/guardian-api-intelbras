@@ -9,7 +9,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .api_client import GuardianApiClient
-from .const import CONF_FASTAPI_HOST, CONF_FASTAPI_PORT, CONF_SESSION_ID, DOMAIN, PLATFORMS
+from .const import CONF_PRE_ARM_PGM, CONF_FASTAPI_HOST, CONF_FASTAPI_PORT, CONF_SESSION_ID, DOMAIN, PLATFORMS
 from .coordinator import GuardianCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -209,6 +209,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         port=entry.data[CONF_FASTAPI_PORT],
         session=session,
     )
+
+    client.pre_arm_pgm = {
+        int(dev): int(pgm)
+        for dev, pgm in (entry.options.get(CONF_PRE_ARM_PGM) or {}).items()
+        if int(pgm) > 0
+    }
 
     # Try to restore session
     stored_session_id = entry.data.get(CONF_SESSION_ID)

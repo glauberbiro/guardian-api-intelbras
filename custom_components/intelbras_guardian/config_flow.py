@@ -13,6 +13,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api_client import GuardianApiClient
 from .const import (
+    CONF_PRE_ARM_PGM,
     CONF_AWAY_PARTITIONS,
     CONF_FASTAPI_HOST,
     CONF_FASTAPI_PORT,
@@ -245,7 +246,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Manage the options - show menu."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["configure_unified_alarm", "configure_device_password", "manage_zones", "reauth"],
+            menu_options=["configure_unified_alarm", "configure_device_password", "configure_pre_arm_pgm", "manage_zones", "reauth"],
         )
 
     async def async_step_configure_unified_alarm(
@@ -458,6 +459,50 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             description_placeholders={
                 "auth_url": auth_url,
                 "api_url": f"http://{host}:{port}",
+            },
+        )
+
+    async def async_step_configure_pre_arm_pgm(
+        self,
+        user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        """Choose a PGM to turn on right before arming each alarm central."""
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+        if not coordinator or not coordinator.data:
+            return self.async_abort(reason="not_loaded")
+
+        devices = {
+            str(device_id): device.get("description", f"Dispositivo {device_id}")
+            for device_id, device in coordinator.data.get("devices", {}).items()
+            if "ELC" not in (device.get("model") or "").upper()
+        }
+        if not devices:
+            return self.async_abort(reason="no_devices")
+
+        current = dict(self._entry.options.get(CONF_PRE_ARM_PGM) or {})
+
+        if user_input is not None:
+            new_map = dict(current)
+            for dev_id in devices:
+                value = int(user_input.get(f"pgm_{dev_id}", "0"))
+                if value > 0:
+                    new_map[dev_id] = value
+                else:
+                    new_map.pop(dev_id, None)
+            return self.async_create_entry(
+                title="", data={**self._entry.options, CONF_PRE_ARM_PGM: new_map}
+            )
+
+        pgm_choices = {"0": "Nenhuma", "1": "PGM 1", "2": "PGM 2"}
+        schema = {
+            vol.Required(f"pgm_{dev_id}", default=str(current.get(dev_id, 0))): vol.In(pgm_choices)
+            for dev_id in devices
+        }
+        return self.async_show_form(
+            step_id="configure_pre_arm_pgm",
+            data_schema=vol.Schema(schema),
+            description_placeholders={
+                "devices": ", ".join(f"pgm_{k} = {v}" for k, v in devices.items())
             },
         )
 
