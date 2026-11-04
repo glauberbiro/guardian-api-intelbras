@@ -2450,7 +2450,7 @@ class ISECNetProtocol:
             try:
                 if self._is_ip_receiver or self._is_v1:
                     cmd = self._build_isecv1_pgm_cmd(self._password, pgm_number, enable)
-                    logger.info(f"V1 PGM{pgm_number} {action}: cmd={cmd.hex()}")
+                    logger.info(f"V1 PGM{pgm_number} {action}: sending command")
                     response = await self._send_and_receive(cmd, timeout=5.0)
                     if not response:
                         return False, "No response"
