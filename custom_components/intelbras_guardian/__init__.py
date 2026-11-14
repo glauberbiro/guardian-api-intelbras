@@ -6,9 +6,9 @@ import time
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, Event
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 
-from .api_client import GuardianApiClient
+from .api_client import GuardianApiClient, GuardianConnectionError
 from .const import CONF_PRE_ARM_PGM, CONF_FASTAPI_HOST, CONF_FASTAPI_PORT, CONF_SESSION_ID, DOMAIN, PLATFORMS
 from .coordinator import GuardianCoordinator
 
@@ -220,7 +220,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     stored_session_id = entry.data.get(CONF_SESSION_ID)
     if stored_session_id:
         client.set_session_id(stored_session_id)
-        if await client.check_session():
+        try:
+            session_valid = await client.check_session()
+        except GuardianConnectionError as err:
+            # Middleware not up yet (typically the add-on still starting after
+            # a host reboot). The stored session may well be fine: let HA retry
+            # setup later instead of dropping it and starting a reauth flow.
+            raise ConfigEntryNotReady(str(err)) from err
+        if session_valid:
             _LOGGER.info("Restored existing session")
         else:
             _LOGGER.warning("Stored session expired or invalid")

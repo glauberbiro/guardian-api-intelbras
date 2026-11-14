@@ -12,6 +12,15 @@ from .models import AlarmStatus, ArmResult
 _LOGGER = logging.getLogger(__name__)
 
 
+class GuardianConnectionError(Exception):
+    """The FastAPI middleware could not be reached (DNS, refused, timeout).
+
+    Distinct from an invalid session: an unreachable middleware (e.g. the
+    add-on still starting after a host reboot) says nothing about whether the
+    stored session is valid, so callers must not treat it as "re-login".
+    """
+
+
 class GuardianApiClient:
     """Client for communicating with FastAPI middleware."""
 
@@ -499,7 +508,12 @@ class GuardianApiClient:
             return False
 
     async def check_session(self) -> bool:
-        """Check if current session is still valid."""
+        """Check if current session is still valid.
+
+        Returns False only when the middleware answered and rejected the
+        session. Raises GuardianConnectionError when the middleware could not
+        be reached at all, so setup can retry instead of asking to re-login.
+        """
         if not self._session_id:
             return False
         try:
@@ -509,8 +523,10 @@ class GuardianApiClient:
                     headers={"X-Session-ID": self._session_id}
                 )
                 return response.status == 200
-        except Exception:
-            return False
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as err:
+            raise GuardianConnectionError(
+                f"Cannot reach Guardian middleware at {self._base_url}: {err}"
+            ) from err
 
     def set_session_id(self, session_id: str) -> None:
         """Set the session ID (for restoring from config)."""
